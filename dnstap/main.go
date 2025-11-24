@@ -73,12 +73,15 @@ var logger = log.New(os.Stderr, "", log.LstdFlags)
 func main() {
 	var tcpOutputs, unixOutputs stringList
 	var fileInputs, tcpInputs, unixInputs stringList
+	var tcpConnInputs, unixConnInputs stringList
 
 	flag.Var(&tcpOutputs, "T", "write dnstap payloads to tcp/ip address")
 	flag.Var(&unixOutputs, "U", "write dnstap payloads to unix socket")
 	flag.Var(&fileInputs, "r", "read dnstap payloads from file")
 	flag.Var(&tcpInputs, "l", "read dnstap payloads from tcp/ip")
 	flag.Var(&unixInputs, "u", "read dnstap payloads from unix socket")
+	flag.Var(&tcpConnInputs, "C", "connect to remote tcp/ip source")
+	flag.Var(&unixConnInputs, "S", "connect to remote unix socket source")
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	log.SetFlags(0)
@@ -87,7 +90,7 @@ func main() {
 	// Handle command-line arguments.
 	flag.Parse()
 
-	if len(fileInputs)+len(unixInputs)+len(tcpInputs) == 0 {
+	if len(fileInputs)+len(unixInputs)+len(tcpInputs)+len(tcpConnInputs)+len(unixConnInputs) == 0 {
 		fmt.Fprintf(os.Stderr, "dnstap: Error: no inputs specified.\n")
 		os.Exit(1)
 	}
@@ -168,6 +171,32 @@ func main() {
 		i := dnstap.NewFrameStreamSockInput(l)
 		i.SetTimeout(*flagTimeout)
 		i.SetLogger(logger)
+		iwg.Add(1)
+		go runInput(i, output, &iwg)
+	}
+	for _, addr := range tcpConnInputs {
+		naddr, err := net.ResolveTCPAddr("tcp", addr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "dnstap: Failed to resolve tcp address %s: %v\n", addr, err)
+			os.Exit(1)
+		}
+		i := dnstap.NewFrameStreamSockConnInput(naddr)
+		i.SetTimeout(*flagTimeout)
+		i.SetLogger(logger)
+		fmt.Fprintf(os.Stderr, "dnstap: connecting to tcp source %s\n", addr)
+		iwg.Add(1)
+		go runInput(i, output, &iwg)
+	}
+	for _, path := range unixConnInputs {
+		naddr, err := net.ResolveUnixAddr("unix", path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "dnstap: Failed to resolve unix address %s: %v\n", path, err)
+			os.Exit(1)
+		}
+		i := dnstap.NewFrameStreamSockConnInput(naddr)
+		i.SetTimeout(*flagTimeout)
+		i.SetLogger(logger)
+		fmt.Fprintf(os.Stderr, "dnstap: connecting to unix source %s\n", path)
 		iwg.Add(1)
 		go runInput(i, output, &iwg)
 	}
